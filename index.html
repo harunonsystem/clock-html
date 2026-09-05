@@ -104,7 +104,17 @@
   .warn{display:none;text-align:center;font-size:11px;color:var(--orange);padding:0 16px 10px;line-height:1.5}
   .warn.show{display:block}
 
-  .laptools{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:12px;min-height:28px}
+  .laptools{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:12px;min-height:28px;flex-wrap:wrap}
+  .copybtns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+  .fmt{
+    appearance:none;border:1px solid var(--line);background:transparent;color:var(--muted);
+    font:500 11px/1 inherit;padding:6px 22px 6px 9px;border-radius:12px;cursor:pointer;
+    background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+    background-position:calc(100% - 12px) 50%,calc(100% - 8px) 50%;
+    background-size:4px 4px,4px 4px;background-repeat:no-repeat;
+  }
+  .fmt:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .fmt option{color:var(--text);background:var(--surface)}
   .status{font-size:11px;color:var(--muted);transition:opacity .2s}
   .ghost{
     appearance:none;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text);
@@ -176,7 +186,14 @@
     </div>
     <div class="laptools">
       <span class="status" id="swStatus" role="status" aria-live="polite"></span>
-      <button class="ghost" id="swCopy" disabled>ラップを画像でコピー</button>
+      <span class="copybtns">
+        <select class="fmt" id="fmt" aria-label="テキストの形式">
+          <option value="notion">Notion（表）</option>
+          <option value="slack">Slack</option>
+        </select>
+        <button class="ghost" id="swCopyText" disabled>テキストでコピー</button>
+        <button class="ghost" id="swCopy" disabled>画像でコピー</button>
+      </span>
     </div>
     <div class="laps" id="lapList"><p class="empty">開始するとラップを記録できます</p></div>
   </section>
@@ -219,8 +236,9 @@
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-in">
     <img id="sheetImg" alt="ラップ記録の画像">
-    <p>この環境では直接コピーできませんでした。<br>画像を右クリック（スマホは長押し）してコピーしてください。</p>
+    <p>この環境では画像を直接コピーできません。<br>画像を右クリック（スマホは長押し）して「画像をコピー」を選ぶか、テキストでコピーしてください。</p>
     <div class="sheet-act">
+      <button id="sheetText">テキストでコピー</button>
       <a id="sheetDl" download="laps.png">ダウンロード</a>
       <button id="sheetClose">閉じる</button>
     </div>
@@ -254,7 +272,8 @@
         mode,
         sw: { running: swRunning, startedAt: swStartedAt, acc: swAcc, laps, lapMark },
         tm: { duration, remain, running: tmRunning, endAt, done },
-        custom: { m: $('cMin').value, s: $('cSec').value }
+        custom: { m: $('cMin').value, s: $('cSec').value },
+        fmt: $('fmt').value
       }));
     } catch (e) {}
   };
@@ -297,7 +316,9 @@
     if (live) { const x = fmtSW(t - lapMark); live.textContent = `${x.head}.${x.cs}`; }
   }
   function renderLaps() {
-    $('swCopy').disabled = !(swRunning || swAcc > 0);
+    const canCopy = !(swRunning || swAcc > 0);
+    $('swCopy').disabled = canCopy;
+    $('swCopyText').disabled = canCopy;
     if (!laps.length && !swRunning && swAcc === 0) {
       lapList.innerHTML = '<p class="empty">開始するとラップを記録できます</p>';
       return;
@@ -434,6 +455,62 @@
     return cv;
   }
 
+  /* Notion などの iframe では clipboard API が使えないため、
+     旧来の execCommand も試す（テキストはこちらなら通る） */
+  function copyText(str) {
+    const ta = document.createElement('textarea');
+    ta.value = str;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, str.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  function lapsAsText() {
+    const d = new Date();
+    const tot = fmtSW(swNow());
+    const times = laps.map(l => l.ms);
+    const best = times.length > 1 ? Math.min(...times) : null;
+    const worst = times.length > 1 ? Math.max(...times) : null;
+    const stamp = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const total = `${tot.head}.${tot.cs}`;
+    const noteOf = ms => (best !== null && ms === best) ? '最速' : (worst !== null && ms === worst) ? '最遅' : '';
+
+    if ($('fmt').value === 'slack') {
+      const head = `ストップウォッチ 合計 ${total}（${laps.length}ラップ / ${stamp}）`;
+      if (!laps.length) return `ストップウォッチ 合計 ${total}（${stamp}）`;
+      const rows = laps.map((l, i) => {
+        const f = fmtSW(l.ms), n = noteOf(l.ms);
+        return `ラップ${i + 1}  ${f.head}.${f.cs}${n ? `  ${n}` : ''}`;
+      });
+      return [head, ...rows].join('\n');
+    }
+
+    const head = `${stamp}　合計 ${total}`;
+    if (!laps.length) return head;
+    const rows = laps.map((l, i) => {
+      const f = fmtSW(l.ms);
+      return `| ${i + 1} | ${f.head}.${f.cs} | ${noteOf(l.ms)} |`;
+    });
+    return [head, '', '| ラップ | タイム | 　 |', '| --- | --- | --- |', ...rows].join('\n');
+  }
+
+  async function copyLapText() {
+    const txt = lapsAsText();
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(txt);
+        flash('テキストをコピーしました'); sheet.hidden = true; return;
+      }
+    } catch (e) { /* 下の execCommand へ */ }
+    if (copyText(txt)) { flash('テキストをコピーしました'); sheet.hidden = true; }
+    else flash('コピーできませんでした');
+  }
+
   async function copyLapImage() {
     if (swCopy.disabled) return;
     let cv;
@@ -446,14 +523,18 @@
         return;
       }
     } catch (e) { /* 権限なし → 下のフォールバックへ */ }
-    const blob = await blobP;
-    const url = URL.createObjectURL(blob);
-    sheetImg.src = url;
-    sheetDl.href = url;
-    sheetDl.download = `laps_${Date.now()}.png`;
+    sheetImg.src = cv.toDataURL('image/png');
+    try {
+      const blob = await blobP;
+      sheetDl.href = URL.createObjectURL(blob);
+      sheetDl.download = `laps_${Date.now()}.png`;
+    } catch (e) {}
     sheet.hidden = false;
   }
   swCopy.onclick = copyLapImage;
+  $('swCopyText').onclick = copyLapText;
+  $('fmt').onchange = save;
+  $('sheetText').onclick = copyLapText;
   $('sheetClose').onclick = () => { sheet.hidden = true; };
   sheet.addEventListener('click', e => { if (e.target === sheet) sheet.hidden = true; });
 
@@ -581,6 +662,7 @@
     if (!st) return;
 
     if (st.custom) { $('cMin').value = st.custom.m; $('cSec').value = st.custom.s; }
+    if (st.fmt) $('fmt').value = st.fmt;
 
     if (st.sw) {
       swAcc = st.sw.acc || 0;

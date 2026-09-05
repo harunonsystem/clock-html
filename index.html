@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ストップウォッチとタイマー</title>
+<style>
+  :root{
+    --bg:#f2f2f7; --surface:#ffffff; --surface-2:#e9e9ee;
+    --line:rgba(60,60,67,.16); --text:#1c1c1e; --muted:#8a8a8e;
+    --green:#28a745; --red:#e0352b; --orange:#d17b00; --blue:#0a72e8;
+    --ring-track:rgba(60,60,67,.14);
+    --shadow:0 1px 3px rgba(0,0,0,.10), 0 8px 24px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#141416; --surface:#1e1e21; --surface-2:#2c2c2f;
+      --line:rgba(255,255,255,.12); --text:#f5f5f7; --muted:#8e8e93;
+      --green:#30d158; --red:#ff453a; --orange:#ff9f0a; --blue:#0a84ff;
+      --ring-track:rgba(255,255,255,.12);
+      --shadow:0 1px 2px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;
+    font-feature-settings:"tnum" 1;
+    min-height:100dvh;
+    display:flex;align-items:stretch;justify-content:center;padding:14px;
+  }
+  .app{
+    width:100%;max-width:420px;background:var(--surface);
+    border-radius:18px;box-shadow:var(--shadow);overflow:hidden;
+    display:flex;flex-direction:column;min-height:0;
+  }
+
+  .segbar{padding:12px 12px 0;flex:none}
+  .seg{display:grid;grid-template-columns:1fr 1fr;background:var(--surface-2);border-radius:9px;padding:2px}
+  .seg button{
+    appearance:none;border:0;background:transparent;color:var(--muted);
+    font:600 13px/1 inherit;padding:7px 0;border-radius:7px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;gap:6px;transition:color .15s ease;
+  }
+  .seg button[aria-selected="true"]{color:var(--text);background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.16)}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--green);opacity:0;transition:opacity .2s}
+  .dot.on{opacity:1}
+
+  .pane{display:none;padding:6px 16px 14px;min-height:0}
+  .pane.active{display:flex;flex-direction:column;flex:1 1 auto}
+
+  .readout{text-align:center;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .sw-time{flex:none;font-size:clamp(40px,13vw,58px);font-weight:200;padding:20px 0 4px;line-height:1}
+  .sw-time .cs{font-size:.62em;font-weight:300;color:var(--muted)}
+
+  .controls{flex:none;display:flex;gap:10px;justify-content:center;padding:14px 0 4px}
+  .btn{
+    appearance:none;cursor:pointer;border:1px solid transparent;font:600 14px/1 inherit;color:var(--text);
+    background:var(--surface-2);height:46px;min-width:104px;border-radius:23px;transition:transform .08s ease;
+  }
+  .btn:active{transform:scale(.96)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .btn.go{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green)}
+  .btn.stop{background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red)}
+  .btn.hold{background:color-mix(in srgb,var(--orange) 20%,transparent);color:var(--orange)}
+
+  .laps{margin-top:12px;border-top:1px solid var(--line);flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+  .lap{display:flex;justify-content:space-between;align-items:baseline;padding:9px 2px;border-bottom:1px solid var(--line);font-size:14px;font-variant-numeric:tabular-nums}
+  .lap .no{color:var(--muted);font-size:13px}
+  .lap.live .no,.lap.live .t{color:var(--text)}
+  .lap.best .t,.lap.best .no{color:var(--green)}
+  .lap.worst .t,.lap.worst .no{color:var(--red)}
+  .lap .tag{font-size:11px;margin-left:6px;opacity:.75}
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:14px 0}
+
+  .tm-main{flex:1 1 auto;display:flex;align-items:center;justify-content:center;min-height:0;padding:12px 0}
+  .tm-bottom{flex:none}
+  .ring-wrap{position:relative;width:min(198px,52vh,66vw);aspect-ratio:1;flex:none}
+  svg.ring{width:100%;height:100%;transform:rotate(-90deg)}
+  .ring .track{fill:none;stroke:var(--ring-track);stroke-width:5}
+  .ring .bar{fill:none;stroke:var(--green);stroke-width:5;stroke-linecap:round}
+  .ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+  .t-time{font-size:clamp(24px,9vh,40px);font-weight:200;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .t-note{font-size:12px;color:var(--muted)}
+  @keyframes pulse{50%{opacity:.25}}
+  .flash .t-time{animation:pulse 1s ease-in-out infinite}
+  @media (prefers-reduced-motion:reduce){.flash .t-time{animation:none}}
+
+  .presets{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px}
+  .chip{appearance:none;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text);font:500 13px/1 inherit;padding:8px 14px;border-radius:16px;transition:background .15s ease}
+  .chip:hover{background:var(--surface-2)}
+  .chip[aria-pressed="true"]{background:var(--text);color:var(--surface);border-color:var(--text)}
+  .chip:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+  .custom{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:12px;font-size:13px;color:var(--muted)}
+  .custom input{width:56px;height:34px;text-align:center;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:500 15px/1 inherit;font-variant-numeric:tabular-nums}
+  .custom input:focus{outline:2px solid var(--blue);outline-offset:1px}
+  .custom .set{appearance:none;cursor:pointer;border:0;background:var(--surface-2);color:var(--text);font:600 13px/1 inherit;height:34px;padding:0 14px;border-radius:9px;margin-left:4px}
+
+  .foot{flex:none;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 12px 14px;font-size:11px;color:var(--muted)}
+  kbd{font:inherit;font-size:10px;background:var(--surface-2);border-radius:4px;padding:1px 5px}
+  .warn{display:none;text-align:center;font-size:11px;color:var(--orange);padding:0 16px 10px;line-height:1.5}
+  .warn.show{display:block}
+
+  .laptools{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:12px;min-height:28px}
+  .status{font-size:11px;color:var(--muted);transition:opacity .2s}
+  .ghost{
+    appearance:none;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text);
+    font:500 12px/1 inherit;padding:7px 12px;border-radius:14px;white-space:nowrap;transition:background .15s ease;
+  }
+  .ghost:hover{background:var(--surface-2)}
+  .ghost:disabled{opacity:.35;cursor:default}
+  .ghost:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+  .sheet[hidden]{display:none}
+  .sheet-in{background:var(--surface);border-radius:14px;padding:14px;max-width:100%;max-height:100%;overflow:auto;text-align:center;box-shadow:var(--shadow)}
+  .sheet-in img{max-width:100%;display:block;border-radius:8px;border:1px solid var(--line)}
+  .sheet-in p{font-size:12px;color:var(--muted);line-height:1.6;margin:10px 0}
+  .sheet-act{display:flex;gap:8px;justify-content:center}
+  .sheet-act a,.sheet-act button{
+    appearance:none;cursor:pointer;border:0;background:var(--surface-2);color:var(--text);
+    font:600 13px/1 inherit;padding:10px 16px;border-radius:10px;text-decoration:none;
+  }
+
+  /* 枠が低いとき */
+  @media (max-height:560px){
+    body{padding:8px}
+    .app{border-radius:14px}
+    .sw-time{font-size:clamp(32px,10vw,44px);padding:12px 0 2px}
+    .controls{padding:10px 0 2px}
+    .btn{height:40px;min-width:92px}
+    .presets{margin-top:10px}
+    .custom{margin-top:8px}
+    .tm-main{padding:6px 0}
+    .foot{padding:6px 12px 10px}
+  }
+  @media (max-height:430px){
+    body{padding:6px}
+    .segbar{padding:8px 8px 0}
+    .pane{padding:4px 12px 10px}
+    .sw-time{font-size:32px;padding:8px 0 0}
+    .btn{height:36px;font-size:13px}
+    .lap{padding:7px 2px}
+    .custom input,.custom .set{height:30px}
+    .foot{display:none}
+  }
+  /* 枠が狭いとき */
+  @media (max-width:340px){
+    body{padding:8px}
+    .controls{gap:8px}
+    .btn{min-width:0;flex:1 1 0}
+    .chip{padding:7px 11px;font-size:12px}
+    .seg button{font-size:12px;gap:4px}
+    .custom{gap:4px;font-size:12px}
+    .custom input{width:48px}
+  }
+</style>
+</head>
+<body>
+<main class="app">
+  <div class="segbar">
+    <div class="seg" role="tablist" aria-label="モード">
+      <button id="tab-sw" role="tab" aria-selected="true" aria-controls="pane-sw">ストップウォッチ<span class="dot" id="dot-sw"></span></button>
+      <button id="tab-tm" role="tab" aria-selected="false" aria-controls="pane-tm">タイマー<span class="dot" id="dot-tm"></span></button>
+    </div>
+  </div>
+
+  <section class="pane active" id="pane-sw" role="tabpanel" aria-labelledby="tab-sw">
+    <div class="readout sw-time" id="swTime">00:00<span class="cs">.00</span></div>
+    <div class="controls">
+      <button class="btn" id="swLap" disabled>ラップ</button>
+      <button class="btn go" id="swToggle">開始</button>
+    </div>
+    <div class="laptools">
+      <span class="status" id="swStatus" role="status" aria-live="polite"></span>
+      <button class="ghost" id="swCopy" disabled>ラップを画像でコピー</button>
+    </div>
+    <div class="laps" id="lapList"><p class="empty">開始するとラップを記録できます</p></div>
+  </section>
+
+  <section class="pane" id="pane-tm" role="tabpanel" aria-labelledby="tab-tm">
+   <div class="tm-main">
+    <div class="ring-wrap" id="ringWrap">
+      <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="track" cx="60" cy="60" r="54"></circle>
+        <circle class="bar" id="ringBar" cx="60" cy="60" r="54" stroke-dasharray="339.292" stroke-dashoffset="0"></circle>
+      </svg>
+      <div class="ring-center">
+        <div class="t-time readout" id="tmTime">02:00</div>
+        <div class="t-note" id="tmNote">2分</div>
+      </div>
+    </div>
+   </div>
+   <div class="tm-bottom">
+    <div class="presets" id="presets">
+      <button class="chip" data-sec="120" aria-pressed="true">2分</button>
+      <button class="chip" data-sec="180" aria-pressed="false">3分</button>
+      <button class="chip" data-sec="480" aria-pressed="false">8分</button>
+    </div>
+    <div class="custom">
+      <input id="cMin" type="number" min="0" max="99" value="5" inputmode="numeric" aria-label="分">分
+      <input id="cSec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="秒">秒
+      <button class="set" id="cSet">セット</button>
+    </div>
+    <div class="controls">
+      <button class="btn" id="tmReset" disabled>リセット</button>
+      <button class="btn go" id="tmToggle">開始</button>
+    </div>
+   </div>
+  </section>
+
+  <p class="warn" id="warn">このブラウザでは保存が使えません。埋め込みが読み込み直されると記録は消えます。</p>
+  <p class="foot"><span><kbd>Space</kbd> 開始・停止 ／ <kbd>L</kbd> ラップ ／ <kbd>R</kbd> リセット ／ <kbd>C</kbd> 画像コピー</span></p>
+</main>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-in">
+    <img id="sheetImg" alt="ラップ記録の画像">
+    <p>この環境では直接コピーできませんでした。<br>画像を右クリック（スマホは長押し）してコピーしてください。</p>
+    <div class="sheet-act">
+      <a id="sheetDl" download="laps.png">ダウンロード</a>
+      <button id="sheetClose">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const now = () => Date.now();
+
+  /* ===== 保存（iframe が読み込み直されても続きから） ===== */
+  const KEY = 'macclock.v2';
+  let store = null;
+  try {
+    const t = '__t';
+    window.localStorage.setItem(t, '1');
+    window.localStorage.removeItem(t);
+    store = window.localStorage;
+  } catch (e) {
+    try { window.sessionStorage.setItem('__t', '1'); window.sessionStorage.removeItem('__t'); store = window.sessionStorage; }
+    catch (e2) { store = null; }
+  }
+  if (!store) $('warn').classList.add('show');
+
+  const save = () => {
+    if (!store) return;
+    try {
+      store.setItem(KEY, JSON.stringify({
+        mode,
+        sw: { running: swRunning, startedAt: swStartedAt, acc: swAcc, laps, lapMark },
+        tm: { duration, remain, running: tmRunning, endAt, done },
+        custom: { m: $('cMin').value, s: $('cSec').value }
+      }));
+    } catch (e) {}
+  };
+  const load = () => {
+    if (!store) return null;
+    try { return JSON.parse(store.getItem(KEY) || 'null'); } catch (e) { return null; }
+  };
+
+  /* ===== タブ ===== */
+  const tabs = { sw: $('tab-sw'), tm: $('tab-tm') };
+  const panes = { sw: $('pane-sw'), tm: $('pane-tm') };
+  let mode = 'sw';
+  function show(next) {
+    mode = next;
+    for (const k of ['sw', 'tm']) {
+      tabs[k].setAttribute('aria-selected', String(k === next));
+      panes[k].classList.toggle('active', k === next);
+    }
+    save();
+  }
+  tabs.sw.onclick = () => show('sw');
+  tabs.tm.onclick = () => show('tm');
+
+  /* ===== ストップウォッチ ===== */
+  const swTime = $('swTime'), swToggle = $('swToggle'), swLapBtn = $('swLap'), lapList = $('lapList');
+  let swRunning = false, swStartedAt = 0, swAcc = 0, laps = [], lapMark = 0;
+  const swNow = () => swAcc + (swRunning ? now() - swStartedAt : 0);
+
+  function fmtSW(ms) {
+    ms = Math.max(0, ms);
+    const cs = Math.floor(ms / 10) % 100, s = Math.floor(ms / 1000) % 60;
+    const m = Math.floor(ms / 60000) % 60, h = Math.floor(ms / 3600000);
+    return { head: h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`, cs: pad(cs) };
+  }
+  function paintSW() {
+    const t = swNow(), f = fmtSW(t);
+    swTime.innerHTML = `${f.head}<span class="cs">.${f.cs}</span>`;
+    $('dot-sw').classList.toggle('on', swRunning);
+    const live = lapList.querySelector('.lap.live .t');
+    if (live) { const x = fmtSW(t - lapMark); live.textContent = `${x.head}.${x.cs}`; }
+  }
+  function renderLaps() {
+    $('swCopy').disabled = !(swRunning || swAcc > 0);
+    if (!laps.length && !swRunning && swAcc === 0) {
+      lapList.innerHTML = '<p class="empty">開始するとラップを記録できます</p>';
+      return;
+    }
+    const times = laps.map(l => l.ms);
+    const best = times.length > 1 ? Math.min(...times) : null;
+    const worst = times.length > 1 ? Math.max(...times) : null;
+    const rows = [];
+    if (swRunning || swAcc > 0) {
+      const f = fmtSW(swNow() - lapMark);
+      rows.push(`<div class="lap live"><span class="no">ラップ ${laps.length + 1}</span><span class="t">${f.head}.${f.cs}</span></div>`);
+    }
+    for (let i = laps.length - 1; i >= 0; i--) {
+      const f = fmtSW(laps[i].ms);
+      let cls = '', tag = '';
+      if (best !== null && laps[i].ms === best) { cls = 'best'; tag = '<span class="tag">最速</span>'; }
+      else if (worst !== null && laps[i].ms === worst) { cls = 'worst'; tag = '<span class="tag">最遅</span>'; }
+      rows.push(`<div class="lap ${cls}"><span class="no">ラップ ${i + 1}${tag}</span><span class="t">${f.head}.${f.cs}</span></div>`);
+    }
+    lapList.innerHTML = rows.join('');
+  }
+  function swStart() {
+    swRunning = true; swStartedAt = now();
+    swToggle.textContent = '停止'; swToggle.className = 'btn stop';
+    swLapBtn.textContent = 'ラップ'; swLapBtn.disabled = false;
+    renderLaps(); save();
+  }
+  function swStop() {
+    swAcc = swNow(); swRunning = false;
+    swToggle.textContent = '再開'; swToggle.className = 'btn go';
+    swLapBtn.textContent = 'リセット'; swLapBtn.disabled = false;
+    paintSW(); save();
+  }
+  function swReset() {
+    swRunning = false; swAcc = 0; swStartedAt = 0; laps = []; lapMark = 0;
+    swToggle.textContent = '開始'; swToggle.className = 'btn go';
+    swLapBtn.textContent = 'ラップ'; swLapBtn.disabled = true;
+    paintSW(); renderLaps(); save();
+  }
+  swToggle.onclick = () => swRunning ? swStop() : swStart();
+  swLapBtn.onclick = () => {
+    if (!swRunning) { swReset(); return; }
+    const t = swNow();
+    laps.push({ ms: t - lapMark });
+    lapMark = t;
+    renderLaps(); save();
+  };
+
+  /* ===== ラップを画像でコピー ===== */
+  const swCopy = $('swCopy'), swStatus = $('swStatus');
+  const sheet = $('sheet'), sheetImg = $('sheetImg'), sheetDl = $('sheetDl');
+  let statusTimer = null;
+
+  function flash(msg) {
+    swStatus.textContent = msg;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { swStatus.textContent = ''; }, 2600);
+  }
+
+  function drawCard() {
+    const cs = getComputedStyle(document.documentElement);
+    const c = (name, fb) => (cs.getPropertyValue(name).trim() || fb);
+    const surface = c('--surface', '#fff'), text = c('--text', '#1c1c1e');
+    const muted = c('--muted', '#8a8a8e'), line = c('--line', 'rgba(0,0,0,.14)');
+    const green = c('--green', '#28a745'), red = c('--red', '#e0352b');
+    const F = '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif';
+
+    const MAX = 30;
+    const shown = laps.slice(-MAX).reverse();
+    const hidden = laps.length - shown.length;
+    const times = laps.map(l => l.ms);
+    const best = times.length > 1 ? Math.min(...times) : null;
+    const worst = times.length > 1 ? Math.max(...times) : null;
+
+    const W = 560, PAD = 36, ROW = 44;
+    const headTop = 178;
+    const H = headTop + shown.length * ROW + (hidden > 0 ? 34 : 0) + 30;
+
+    const dpr = Math.min(3, Math.max(2, window.devicePixelRatio || 2));
+    const cv = document.createElement('canvas');
+    cv.width = W * dpr; cv.height = H * dpr;
+    const x = cv.getContext('2d');
+    x.scale(dpr, dpr);
+    x.fillStyle = surface; x.fillRect(0, 0, W, H);
+    x.textBaseline = 'alphabetic';
+
+    // ヘッダー
+    x.fillStyle = muted; x.font = `500 15px ${F}`;
+    x.textAlign = 'left'; x.fillText('ストップウォッチ', PAD, 50);
+    const d = new Date();
+    x.textAlign = 'right';
+    x.font = `400 13px ${F}`;
+    x.fillText(`${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`, W - PAD, 50);
+
+    // 合計タイム
+    const tot = fmtSW(swNow());
+    x.textAlign = 'center'; x.fillStyle = text;
+    x.font = `200 64px ${F}`;
+    const headW = x.measureText(tot.head).width;
+    x.font = `300 40px ${F}`;
+    const csW = x.measureText('.' + tot.cs).width;
+    const startX = (W - (headW + csW)) / 2;
+    x.textAlign = 'left';
+    x.font = `200 64px ${F}`;
+    x.fillText(tot.head, startX, 128);
+    x.fillStyle = muted; x.font = `300 40px ${F}`;
+    x.fillText('.' + tot.cs, startX + headW, 128);
+
+    // 区切り
+    x.strokeStyle = line; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(PAD, headTop - 0.5); x.lineTo(W - PAD, headTop - 0.5); x.stroke();
+
+    // ラップ行
+    shown.forEach((l, i) => {
+      const idx = laps.indexOf(l) + 1;
+      const y = headTop + i * ROW;
+      let color = text, note = '';
+      if (best !== null && l.ms === best) { color = green; note = ' 最速'; }
+      else if (worst !== null && l.ms === worst) { color = red; note = ' 最遅'; }
+      const f = fmtSW(l.ms);
+      x.fillStyle = color;
+      x.textAlign = 'left'; x.font = `500 16px ${F}`;
+      x.fillText(`ラップ ${idx}${note}`, PAD, y + 28);
+      x.textAlign = 'right'; x.font = `400 20px ${F}`;
+      x.fillText(`${f.head}.${f.cs}`, W - PAD, y + 28);
+      x.strokeStyle = line;
+      x.beginPath(); x.moveTo(PAD, y + ROW - 0.5); x.lineTo(W - PAD, y + ROW - 0.5); x.stroke();
+    });
+
+    if (hidden > 0) {
+      x.fillStyle = muted; x.textAlign = 'center'; x.font = `400 13px ${F}`;
+      x.fillText(`ほか ${hidden} 件`, W / 2, headTop + shown.length * ROW + 22);
+    }
+    return cv;
+  }
+
+  async function copyLapImage() {
+    if (swCopy.disabled) return;
+    let cv;
+    try { cv = drawCard(); } catch (e) { flash('画像を作れませんでした'); return; }
+    const blobP = new Promise(res => cv.toBlob(res, 'image/png'));
+    try {
+      if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
+        await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blobP })]);
+        flash('画像をコピーしました');
+        return;
+      }
+    } catch (e) { /* 権限なし → 下のフォールバックへ */ }
+    const blob = await blobP;
+    const url = URL.createObjectURL(blob);
+    sheetImg.src = url;
+    sheetDl.href = url;
+    sheetDl.download = `laps_${Date.now()}.png`;
+    sheet.hidden = false;
+  }
+  swCopy.onclick = copyLapImage;
+  $('sheetClose').onclick = () => { sheet.hidden = true; };
+  sheet.addEventListener('click', e => { if (e.target === sheet) sheet.hidden = true; });
+
+  /* ===== タイマー ===== */
+  const tmTime = $('tmTime'), tmNote = $('tmNote'), tmToggle = $('tmToggle'), tmReset = $('tmReset');
+  const ringBar = $('ringBar'), ringWrap = $('ringWrap'), presets = $('presets');
+  const CIRC = 2 * Math.PI * 54;
+  let duration = 120000, remain = 120000, tmRunning = false, endAt = 0, done = false;
+
+  const label = sec => {
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m && s ? `${m}分${s}秒` : m ? `${m}分` : `${s}秒`;
+  };
+  const fmtTM = ms => {
+    const total = Math.ceil(Math.max(0, ms) / 1000);
+    const h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60;
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  };
+  const chipFor = ms => [...presets.children].find(c => +c.dataset.sec * 1000 === ms) || null;
+
+  function setDuration(ms, chip) {
+    stopAlarm();
+    duration = ms; remain = ms; tmRunning = false; done = false;
+    ringWrap.classList.remove('flash');
+    tmToggle.textContent = '開始'; tmToggle.className = 'btn go'; tmToggle.disabled = ms <= 0;
+    tmReset.textContent = 'リセット'; tmReset.disabled = true;
+    tmNote.textContent = label(Math.round(ms / 1000));
+    [...presets.children].forEach(c => c.setAttribute('aria-pressed', String(chip === c)));
+    paintTM(); save();
+  }
+  function paintTM() {
+    const left = tmRunning ? Math.max(0, endAt - now()) : remain;
+    tmTime.textContent = done ? '00:00' : fmtTM(left);
+    const ratio = duration > 0 ? Math.max(0, left / duration) : 0;
+    ringBar.setAttribute('stroke-dashoffset', (CIRC * (1 - ratio)).toFixed(3));
+    ringBar.style.stroke = done ? 'var(--red)'
+      : (left <= 10000 && (tmRunning || left < duration) ? 'var(--orange)' : 'var(--green)');
+    $('dot-tm').classList.toggle('on', tmRunning);
+    if (tmRunning && left <= 0) finish(true);
+  }
+  function tmStart() {
+    if (remain <= 0) return;
+    unlockAudio();
+    tmRunning = true; done = false; endAt = now() + remain;
+    tmToggle.textContent = '一時停止'; tmToggle.className = 'btn hold';
+    tmReset.textContent = 'キャンセル'; tmReset.disabled = false;
+    paintTM(); save();
+  }
+  function tmPause() {
+    remain = Math.max(0, endAt - now()); tmRunning = false;
+    tmToggle.textContent = '再開'; tmToggle.className = 'btn go';
+    paintTM(); save();
+  }
+  function finish(withSound) {
+    tmRunning = false; remain = 0; done = true;
+    ringWrap.classList.add('flash');
+    tmNote.textContent = '完了';
+    tmToggle.textContent = '停止'; tmToggle.className = 'btn stop'; tmToggle.disabled = false;
+    tmReset.textContent = 'リセット'; tmReset.disabled = false;
+    if (withSound) startAlarm();
+    paintTM(); save();
+  }
+  tmToggle.onclick = () => {
+    if (done) { setDuration(duration, chipFor(duration)); return; }
+    tmRunning ? tmPause() : tmStart();
+  };
+  tmReset.onclick = () => setDuration(duration, chipFor(duration));
+  presets.onclick = e => {
+    const chip = e.target.closest('.chip');
+    if (chip) setDuration(+chip.dataset.sec * 1000, chip);
+  };
+  $('cSet').onclick = () => {
+    const m = Math.min(99, Math.max(0, +$('cMin').value || 0));
+    const s = Math.min(59, Math.max(0, +$('cSec').value || 0));
+    $('cMin').value = m; $('cSec').value = s;
+    const total = (m * 60 + s) * 1000;
+    if (total <= 0) { tmNote.textContent = '1秒以上を入力してください'; return; }
+    setDuration(total, chipFor(total));
+  };
+  ['cMin', 'cSec'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') $('cSet').click(); }));
+
+  /* ===== アラーム ===== */
+  let ac = null, alarmTimer = null;
+  function unlockAudio() {
+    try {
+      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+      if (ac.state === 'suspended') ac.resume();
+    } catch (e) { ac = null; }
+  }
+  function chirp(at, freq) {
+    if (!ac) return;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(.22, at + .01);
+    g.gain.exponentialRampToValueAtTime(.0001, at + .18);
+    o.connect(g).connect(ac.destination);
+    o.start(at); o.stop(at + .2);
+  }
+  function ring3() { if (!ac) return; const t = ac.currentTime; chirp(t, 880); chirp(t + .25, 880); chirp(t + .5, 1174); }
+  function startAlarm() {
+    unlockAudio(); ring3();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+    let n = 0;
+    alarmTimer = setInterval(() => { if (++n > 8) return stopAlarm(); ring3(); }, 1600);
+  }
+  function stopAlarm() { if (alarmTimer) { clearInterval(alarmTimer); alarmTimer = null; } }
+
+  /* ===== キーボード ===== */
+  document.addEventListener('keydown', e => {
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'TEXTAREA') return;
+    if (e.key === 'Escape') { sheet.hidden = true; return; }
+    if (e.code === 'Space') { e.preventDefault(); (mode === 'sw' ? swToggle : tmToggle).click(); }
+    else if (e.key.toLowerCase() === 'l' && mode === 'sw') { if (swRunning) swLapBtn.click(); }
+    else if (e.key.toLowerCase() === 'c' && mode === 'sw') { copyLapImage(); }
+    else if (e.key.toLowerCase() === 'r') { mode === 'sw' ? swReset() : tmReset.click(); }
+  });
+
+  /* ===== 復元 ===== */
+  function restore() {
+    const st = load();
+    setDuration(120000, presets.children[0]);
+    swReset();
+    if (!st) return;
+
+    if (st.custom) { $('cMin').value = st.custom.m; $('cSec').value = st.custom.s; }
+
+    if (st.sw) {
+      swAcc = st.sw.acc || 0;
+      laps = Array.isArray(st.sw.laps) ? st.sw.laps : [];
+      lapMark = st.sw.lapMark || 0;
+      if (st.sw.running && st.sw.startedAt) {
+        swRunning = true; swStartedAt = st.sw.startedAt;
+        swToggle.textContent = '停止'; swToggle.className = 'btn stop';
+        swLapBtn.textContent = 'ラップ'; swLapBtn.disabled = false;
+      } else if (swAcc > 0) {
+        swToggle.textContent = '再開'; swToggle.className = 'btn go';
+        swLapBtn.textContent = 'リセット'; swLapBtn.disabled = false;
+      }
+      renderLaps();
+    }
+
+    if (st.tm && st.tm.duration > 0) {
+      duration = st.tm.duration;
+      [...presets.children].forEach(c => c.setAttribute('aria-pressed', String(chipFor(duration) === c)));
+      tmNote.textContent = label(Math.round(duration / 1000));
+      if (st.tm.running && st.tm.endAt) {
+        const left = st.tm.endAt - now();
+        if (left > 0) {
+          remain = left; tmRunning = true; endAt = st.tm.endAt;
+          tmToggle.textContent = '一時停止'; tmToggle.className = 'btn hold';
+          tmReset.textContent = 'キャンセル'; tmReset.disabled = false;
+        } else {
+          finish(false);
+          tmNote.textContent = '完了（表示していない間に終了）';
+        }
+      } else if (st.tm.done) {
+        finish(false);
+      } else {
+        remain = st.tm.remain != null ? st.tm.remain : duration;
+        if (remain < duration) {
+          tmToggle.textContent = '再開'; tmToggle.className = 'btn go';
+          tmReset.textContent = 'キャンセル'; tmReset.disabled = false;
+        }
+      }
+    }
+
+    if (st.mode === 'tm') show('tm');
+    paintSW(); paintTM();
+  }
+
+  /* ===== ループ ===== */
+  function loop() { paintSW(); paintTM(); requestAnimationFrame(loop); }
+  restore();
+  requestAnimationFrame(loop);
+  setInterval(() => { paintTM(); if (swRunning || tmRunning) save(); }, 500);
+  document.addEventListener('visibilitychange', () => { paintSW(); paintTM(); save(); });
+  window.addEventListener('pagehide', save);
+  window.addEventListener('blur', save);
+})();
+</script>
+</body>
+</html>
